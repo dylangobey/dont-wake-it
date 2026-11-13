@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: 45df239a11a5ad9458a70907a5cef224
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 297320
+  packageName: 'PurrNet: Multiplayer Networking'
+  packageVersion: v1.23.0
+  assetPath: Assets/PurrNet/Runtime/Components/NetworkModule/SyncDictionary.cs
+  uploadId: 994590

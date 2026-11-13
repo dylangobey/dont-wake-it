@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: a5365c6670934c2485e3ea89e3819e39
+AssemblyDefinitionImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 297320
+  packageName: 'PurrNet: Multiplayer Networking'
+  packageVersion: v1.23.0
+  assetPath: Assets/PurrNet/Addons/WebRTC/Runtime/PurrNet.WebRTC.Runtime.asmdef
+  uploadId: 994590

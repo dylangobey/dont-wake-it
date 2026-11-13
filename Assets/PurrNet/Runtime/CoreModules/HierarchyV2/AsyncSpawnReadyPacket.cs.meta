@@ -1,0 +1,10 @@
+fileFormatVersion: 2
+guid: 6fdb60d239384ee6877aa7a33a93172c
+timeCreated: 1753984200
+AssetOrigin:
+  serializedVersion: 1
+  productId: 297320
+  packageName: 'PurrNet: Multiplayer Networking'
+  packageVersion: v1.23.0
+  assetPath: Assets/PurrNet/Runtime/CoreModules/HierarchyV2/AsyncSpawnReadyPacket.cs
+  uploadId: 994590

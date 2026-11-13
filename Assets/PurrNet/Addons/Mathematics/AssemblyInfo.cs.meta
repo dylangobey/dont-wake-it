@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: 8fba0185104038c488c3ab25c7c15899
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 297320
+  packageName: 'PurrNet: Multiplayer Networking'
+  packageVersion: v1.23.0
+  assetPath: Assets/PurrNet/Addons/Mathematics/AssemblyInfo.cs
+  uploadId: 994590

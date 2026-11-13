@@ -1,0 +1,10 @@
+fileFormatVersion: 2
+guid: e0ad557dce594f188c76eca8f1c65795
+timeCreated: 1788970751
+AssetOrigin:
+  serializedVersion: 1
+  productId: 297320
+  packageName: 'PurrNet: Multiplayer Networking'
+  packageVersion: v1.23.0
+  assetPath: Assets/PurrNet/Runtime/CoreModules/Scenes/SceneEqualityComparer.cs
+  uploadId: 994590

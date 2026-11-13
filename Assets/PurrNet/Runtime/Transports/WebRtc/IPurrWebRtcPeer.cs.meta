@@ -1,0 +1,9 @@
+fileFormatVersion: 2
+guid: f98beb608bca45a78ddf03e185be5021
+AssetOrigin:
+  serializedVersion: 1
+  productId: 297320
+  packageName: 'PurrNet: Multiplayer Networking'
+  packageVersion: v1.23.0
+  assetPath: Assets/PurrNet/Runtime/Transports/WebRtc/IPurrWebRtcPeer.cs
+  uploadId: 994590

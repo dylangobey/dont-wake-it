@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: 3c99bbedaa9e42b45b0a545ff5d3944b
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 297320
+  packageName: 'PurrNet: Multiplayer Networking'
+  packageVersion: v1.23.0
+  assetPath: Assets/PurrNet/Runtime/CoreModules/Auth/AuthModule.cs
+  uploadId: 994590

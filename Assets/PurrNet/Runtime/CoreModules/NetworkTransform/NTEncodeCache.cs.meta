@@ -1,0 +1,9 @@
+fileFormatVersion: 2
+guid: 7c2e94a1f5d84b60a3c8e1f6b9d2a405
+AssetOrigin:
+  serializedVersion: 1
+  productId: 297320
+  packageName: 'PurrNet: Multiplayer Networking'
+  packageVersion: v1.23.0
+  assetPath: Assets/PurrNet/Runtime/CoreModules/NetworkTransform/NTEncodeCache.cs
+  uploadId: 994590

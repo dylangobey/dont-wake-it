@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: 1a7db34a9dda14049b4ae1862e48d33a
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 297320
+  packageName: 'PurrNet: Multiplayer Networking'
+  packageVersion: v1.23.0
+  assetPath: Assets/PurrNet/Editor/ReferenceDrawer.cs
+  uploadId: 994590

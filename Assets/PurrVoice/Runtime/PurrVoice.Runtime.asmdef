@@ -1,0 +1,25 @@
+{
+    "name": "PurrVoice.Runtime",
+    "rootNamespace": "PurrNet.Voice",
+    "references": [
+        "GUID:35ac6b9ccd5c2764e889141c77406b08",
+        "GUID:6e20f757a1bae164fa42750dd2b27dcb",
+        "GUID:d444a9c79d21fec4181e6e12dc2e9706",
+        "GUID:76246f94e3fb6b34fbeda581b59ad31a"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [
+        {
+            "name": "dev.purrnet.purrpipes",
+            "expression": "",
+            "define": "PURR_PIPES"
+        }
+    ],
+    "noEngineReferences": false
+}

@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: beca45fc1d6f50f4c9c236d076780796
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 297320
+  packageName: 'PurrNet: Multiplayer Networking'
+  packageVersion: v1.23.0
+  assetPath: Assets/PurrNet/Runtime/BitPacker/Packers/PackUnityAnimatorTypes.cs
+  uploadId: 994590

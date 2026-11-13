@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: f785322ff1648ab4fadc650b98aebb49
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 297320
+  packageName: 'PurrNet: Multiplayer Networking'
+  packageVersion: v1.23.0
+  assetPath: Assets/PurrNet/Editor/NetworkSimulationDrawer.cs
+  uploadId: 994590

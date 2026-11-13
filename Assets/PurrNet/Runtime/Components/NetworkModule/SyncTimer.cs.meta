@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: 0f7be893e2d5c5e4ebb135e97e2e973f
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 297320
+  packageName: 'PurrNet: Multiplayer Networking'
+  packageVersion: v1.23.0
+  assetPath: Assets/PurrNet/Runtime/Components/NetworkModule/SyncTimer.cs
+  uploadId: 994590

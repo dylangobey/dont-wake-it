@@ -1,0 +1,9 @@
+fileFormatVersion: 2
+guid: d2f5948c61bc4838a2ebf9da2445b570
+AssetOrigin:
+  serializedVersion: 1
+  productId: 297320
+  packageName: 'PurrNet: Multiplayer Networking'
+  packageVersion: v1.23.0
+  assetPath: Assets/PurrNet/Codegen/IlppProfile.cs
+  uploadId: 994590

@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: 3fd0dcda8fb940239e5a39d2f289ca57
+MonoImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 297320
+  packageName: 'PurrNet: Multiplayer Networking'
+  packageVersion: v1.23.0
+  assetPath: Assets/PurrNet/Addons/WebRTC/Tests/UnityWebRtcPeerTests.cs
+  uploadId: 994590

@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: 35556f87eb8cb2249af8ae43ca735b90
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 297320
+  packageName: 'PurrNet: Multiplayer Networking'
+  packageVersion: v1.23.0
+  assetPath: Assets/PurrNet/Externals/LiteNetLib/ConnectionRequest.cs
+  uploadId: 994590

@@ -1,0 +1,27 @@
+{
+    "name": "PurrVoice.FMOD",
+    "rootNamespace": "PurrNet.Voice.FMODIntegration",
+    "references": [
+        "PurrVoice.Runtime",
+        "PurrNet.Microphone",
+        "FMODUnity",
+        "PurrNet.Runtime"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "PURRVOICE_FMOD"
+    ],
+    "versionDefines": [
+        {
+            "name": "com.fmod.unity",
+            "expression": "",
+            "define": "PURRVOICE_FMOD"
+        }
+    ],
+    "noEngineReferences": false
+}

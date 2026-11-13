@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: 6c3a64c8e5a534f4183ca86e91c2337f
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 297320
+  packageName: 'PurrNet: Multiplayer Networking'
+  packageVersion: v1.23.0
+  assetPath: Assets/PurrNet/Runtime/CoreModules/Scenes/ScenesModule.Addressables.cs
+  uploadId: 994590

@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: 7a901c8fdfe4fc24a9a2781725a302be
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 297320
+  packageName: 'PurrNet: Multiplayer Networking'
+  packageVersion: v1.23.0
+  assetPath: Assets/PurrNet/Runtime/CoreModules/NetworkTransform/NetworkTransformModule.cs
+  uploadId: 994590

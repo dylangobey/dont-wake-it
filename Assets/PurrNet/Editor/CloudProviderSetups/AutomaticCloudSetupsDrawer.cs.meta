@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: f9818351f84fec94a8f60e2a8124e1d4
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 297320
+  packageName: 'PurrNet: Multiplayer Networking'
+  packageVersion: v1.23.0
+  assetPath: Assets/PurrNet/Editor/CloudProviderSetups/AutomaticCloudSetupsDrawer.cs
+  uploadId: 994590
