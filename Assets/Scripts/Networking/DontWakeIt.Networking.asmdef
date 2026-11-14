@@ -1,0 +1,19 @@
+{
+	"name": "DontWakeIt.Networking",
+	"rootNamespace": "DontWakeIt.Networking",
+	"references": [
+		"PurrNet.Runtime",
+		"PurrNet.Edgegap.Runtime",
+		"LiteNetLib",
+		"Unity.InputSystem"
+	],
+	"includePlatforms": [],
+	"excludePlatforms": [],
+	"allowUnsafeCode": false,
+	"overrideReferences": false,
+	"precompiledReferences": [],
+	"autoReferenced": true,
+	"defineConstraints": [],
+	"versionDefines": [],
+	"noEngineReferences": false
+}

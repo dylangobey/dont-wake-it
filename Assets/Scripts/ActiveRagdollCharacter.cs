@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using PurrNet;
 using UnityEngine;
 using UnityEngine.Animations;
 using UnityEngine.Playables;
@@ -43,6 +44,14 @@ namespace DontWakeIt.Player
         [SerializeField] private float forwardYawOffset;
         [Tooltip("Debug: show the animated rig overlapped on the physics puppet so you can see how well physics follows it.")]
         [SerializeField] private bool showAnimatedRig;
+
+        [Header("Upper body tracks the camera")]
+        [Tooltip("Most the spine/head may twist away from the hips, in degrees.")]
+        [SerializeField] private float maxUpperBodyTwist = 80f;
+        [Tooltip("Shares of the twist taken by stomach, chest and head. They add up to how much of the look angle the head follows.")]
+        [SerializeField] private float stomachTwist = 0.3f;
+        [SerializeField] private float torsoTwist = 0.4f;
+        [SerializeField] private float headTwist = 0.3f;
 
         [Header("Walk animation")]
         [Tooltip("Metres the character travels during ONE full loop of the walk clip. Tune until feet stop sliding.")]
@@ -104,6 +113,29 @@ namespace DontWakeIt.Player
 
         /// <summary>Hips height above the lowest animated foot sole, as the animation currently has it (includes walk bob).</summary>
         public float AnimatedHipsHeight { get; private set; } = 1f;
+        /// <summary>One-line animation state for the debug readout.</summary>
+        public string DebugInfo =>
+            "clip=" + (walkClip ? walkClip.name : "NONE") + "  graph=" + (graph.IsValid() ? "ok" : "INVALID") +
+            "  phase=" + phase.ToString("F2") + "  animHipsH=" + AnimatedHipsHeight.ToString("F2") +
+            "  twist=" + TorsoTwistDegrees.ToString("F0");
+
+        /// <summary>Per-joint diagnostics: how much the clip rotates each limb and how well the puppet follows.</summary>
+        public string DebugJoints()
+        {
+            int worst = 1;
+            for (int i = 2; i < BoneCount; i++) if (trackError[i] > trackError[worst]) worst = i;
+            int th = (int)Bone.LeftThigh, kn = (int)Bone.LeftLeg, ar = (int)Bone.LeftArm;
+            return "clip moves (deg from rest): thigh " + animDeviation[th].ToString("F0") + "  knee " + animDeviation[kn].ToString("F0") +
+                   "  arm " + animDeviation[ar].ToString("F0") +
+                   "\npuppet error (deg): thigh " + trackError[th].ToString("F0") + "  knee " + trackError[kn].ToString("F0") +
+                   "  worst " + Names[worst] + " " + trackError[worst].ToString("F0");
+        }
+
+        /// <summary>The facing the character was placed with. The controller starts from this heading.</summary>
+        public float RestFacingYaw { get; private set; }
+        /// <summary>Degrees the chest is currently twisted away from the hips toward the camera.</summary>
+        public float TorsoTwistDegrees { get; private set; }
+        public Quaternion AnimatedRotation(Bone b) => anim[(int)b] ? anim[(int)b].rotation : Quaternion.identity;
         public Quaternion AnimatedHipsRotation => anim[(int)Bone.Hips] ? anim[(int)Bone.Hips].rotation : Quaternion.identity;
 
         // ---------------------------------------------------------------- State
@@ -119,6 +151,13 @@ namespace DontWakeIt.Player
         private readonly Renderer[][] boneRenderers = new Renderer[BoneCount][];
         private readonly Grip[] grips = new Grip[2];
         private Renderer[] animatedRenderers = Array.Empty<Renderer>();
+
+        private readonly Vector3[] restLocalPos = new Vector3[BoneCount];     // rest pose, relative to the puppet root
+        private readonly Quaternion[] restLocalRot = new Quaternion[BoneCount];
+        private bool needsPoseReset;
+
+        private readonly float[] trackError = new float[BoneCount];     // degrees: puppet vs animation
+        private readonly float[] animDeviation = new float[BoneCount];  // degrees: animation vs rest pose
 
         private PlayableGraph graph;
         private AnimationClipPlayable walkPlayable, idlePlayable;
@@ -155,9 +194,15 @@ namespace DontWakeIt.Player
             }
 
             if (!FindAnimatedBones()) { enabled = false; return; }
+            RestFacingYaw = animatedRig.eulerAngles.y - forwardYawOffset;
             MeasureAnimatedRig();
             UpdateAnimatedHipsHeight();   // rest pose, until the first animation frame
             BuildPuppet();
+
+            // Tell PurrNet which transforms to replicate. This must happen in Awake, before the object is spawned.
+            var networkBones = GetComponent<NetworkBones>();
+            if (networkBones) networkBones.extraBones = PuppetTransforms;
+
             PrepareAnimatedRig();
             BuildAnimationGraph();
 
@@ -239,6 +284,12 @@ namespace DontWakeIt.Player
                 if (!puppet[i]) { Debug.LogError("Puppet is missing " + Names[i], this); return; }
                 var rends = puppet[i].GetComponentsInChildren<Renderer>(true);
                 boneRenderers[i] = rends;
+            }
+
+            for (int i = 0; i < BoneCount; i++)
+            {
+                restLocalPos[i] = puppetRoot.InverseTransformPoint(puppet[i].position);
+                restLocalRot[i] = Quaternion.Inverse(puppetRoot.rotation) * puppet[i].rotation;
             }
 
             material = new PhysicsMaterial("PuppetPart")
@@ -513,7 +564,7 @@ namespace DontWakeIt.Player
         /// signedSpeed: ground-relative speed in the direction the body faces (negative = walking backwards).
         /// </summary>
         public void Evaluate(float dt, float signedSpeed, bool grounded, float facingYaw,
-            Vector3 lookDirection, float reachLeft, float reachRight, float limp)
+            float upperBodyYaw, Vector3 lookDirection, float reachLeft, float reachRight, float limp)
         {
             if (!IsReady || !simulated || !graph.IsValid()) return;
 
@@ -530,16 +581,35 @@ namespace DontWakeIt.Player
 
             UpdateAnimatedHipsHeight();
 
+            float twist = Mathf.Clamp(upperBodyYaw, -maxUpperBodyTwist, maxUpperBodyTwist);
+            TorsoTwistDegrees = twist * (stomachTwist + torsoTwist);
+
             for (int i = 1; i < BoneCount; i++)
             {
                 if (!joints[i]) continue;
                 int p = Parents[i];
                 Quaternion animRel = Quaternion.Inverse(anim[p].rotation) * anim[i].rotation;
 
+                // Twist the spine and head about the vertical axis so the upper body tracks the camera while the
+                // hips and legs lag behind and step round. Each bone only adds its own share of the twist.
+                float share = i == (int)Bone.Stomach ? stomachTwist
+                            : i == (int)Bone.Torso ? torsoTwist
+                            : i == (int)Bone.Head ? headTwist : 0f;
+                if (share > 0f)
+                {
+                    Quaternion parentWorld = anim[p].rotation;
+                    animRel = Quaternion.Inverse(parentWorld) * Quaternion.Euler(0f, twist * share, 0f) * parentWorld * animRel;
+                }
+
                 if (i == (int)Bone.LeftArm && reachLeft > 0.001f)
                     animRel = Quaternion.Slerp(animRel, ReachRelative(i, p, lookDirection), reachLeft);
                 else if (i == (int)Bone.RightArm && reachRight > 0.001f)
                     animRel = Quaternion.Slerp(animRel, ReachRelative(i, p, lookDirection), reachRight);
+
+                // Diagnostics: how far the clip moves this bone, and how closely the puppet follows it.
+                animDeviation[i] = Quaternion.Angle(animRel, restRelative[i]);
+                Quaternion actualRel = Quaternion.Inverse(puppet[p].rotation) * puppet[i].rotation;
+                trackError[i] = Quaternion.Angle(actualRel, animRel);
 
                 // Joint target = inverse of the wanted rotation, expressed from the rest pose.
                 joints[i].targetRotation = Quaternion.Inverse(animRel) * restRelative[i];
@@ -629,13 +699,74 @@ namespace DontWakeIt.Player
         {
             if (!IsReady || simulated == simulate) return;
             simulated = simulate;
-            if (!simulate) { ReleaseGrip(BodySide.Left); ReleaseGrip(BodySide.Right); }
+            if (!simulate)
+            {
+                ReleaseGrip(BodySide.Left);
+                ReleaseGrip(BodySide.Right);
+                needsPoseReset = true;
+            }
             for (int i = 0; i < BoneCount; i++)
             {
                 if (!bodies[i]) continue;
                 bodies[i].isKinematic = !simulate;
                 bodies[i].interpolation = simulate ? RigidbodyInterpolation.Interpolate : RigidbodyInterpolation.None;
             }
+
+            // Taking over from the network: the bones may have been left in whatever pose incoming data put
+            // them in. Start physics from a clean rest pose instead.
+            if (simulate && needsPoseReset)
+            {
+                needsPoseReset = false;
+                ResetPoseToRest();
+            }
+        }
+
+        /// <summary>Where the hips belong if the player hasn't moved: the rest pose relative to the puppet root.</summary>
+        public Vector3 RestHipsWorld => puppetRoot ? puppetRoot.TransformPoint(restLocalPos[(int)Bone.Hips]) : Vector3.zero;
+
+        /// <summary>Puts every part back in its rest pose at the puppet's root, with no velocity (spawn / respawn).</summary>
+        public void ResetPoseToRest()
+        {
+            if (!IsReady) return;
+            ReleaseGrip(BodySide.Left);
+            ReleaseGrip(BodySide.Right);
+
+            for (int i = 0; i < BoneCount; i++)
+            {
+                puppet[i].SetPositionAndRotation(puppetRoot.TransformPoint(restLocalPos[i]),
+                    puppetRoot.rotation * restLocalRot[i]);
+                if (bodies[i] && !bodies[i].isKinematic)
+                {
+                    bodies[i].linearVelocity = Vector3.zero;
+                    bodies[i].angularVelocity = Vector3.zero;
+                }
+            }
+            Physics.SyncTransforms();
+        }
+
+        /// <summary>Diagnostics: how the puppet's bodies and colliders are currently set up.</summary>
+        public string DebugBodies()
+        {
+            int total = 0, kinematic = 0, detect = 0, solid = 0;
+            float minScale = float.MaxValue;
+            bool nan = false;
+            for (int i = 0; i < BoneCount; i++)
+            {
+                if (!bodies[i]) continue;
+                total++;
+                if (bodies[i].isKinematic) kinematic++;
+                if (bodies[i].detectCollisions) detect++;
+                var col = puppet[i].GetComponent<Collider>();
+                if (col && col.enabled && !col.isTrigger) solid++;
+
+                Vector3 sc = puppet[i].lossyScale;
+                minScale = Mathf.Min(minScale, Mathf.Abs(sc.x), Mathf.Min(Mathf.Abs(sc.y), Mathf.Abs(sc.z)));
+                Vector3 pos = puppet[i].position;
+                if (float.IsNaN(pos.x) || float.IsNaN(pos.y) || float.IsNaN(pos.z)) nan = true;
+            }
+            return "bodies=" + total + " kinematic=" + kinematic + " detectCollisions=" + detect +
+                   " solidColliders=" + solid + " minScale=" + minScale.ToString("F2") + " nan=" + nan +
+                   " layer=" + LayerMask.LayerToName(Hips.gameObject.layer) + " simulated=" + simulated;
         }
 
         public void SetBoneVisible(Bone bone, bool visible)
@@ -707,7 +838,11 @@ namespace DontWakeIt.Player
         internal void ReportCollision(RagdollPartContact part, Collision c)
         {
             if (c.collider.transform.IsChildOf(transform)) return;
-            PartCollision?.Invoke(part.bone, c.relativeVelocity.magnitude, c);
+            // Only the speed INTO the surface counts. relativeVelocity also includes sliding along it, which
+            // made ordinary footsteps look like hard impacts.
+            float speed = c.relativeVelocity.magnitude;
+            if (c.contactCount > 0) speed = Mathf.Abs(Vector3.Dot(c.relativeVelocity, c.GetContact(0).normal));
+            PartCollision?.Invoke(part.bone, speed, c);
         }
     }
 

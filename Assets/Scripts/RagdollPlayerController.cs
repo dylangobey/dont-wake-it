@@ -1,47 +1,85 @@
-using PurrNet;
 using System;
+using System.Collections;
+using PurrNet;
 using UnityEngine;
 using UnityEngine.InputSystem;
 
 namespace DontWakeIt.Player
 {
+    /// <summary>
+    /// First-person controller for an <see cref="ActiveRagdollCharacter"/>.
+    ///
+    /// The physics body stays up and moves because of three things this script applies:
+    ///  - Hover:    a stiff spring holds the hips at the height the walk animation wants (so the animated legs
+    ///              reach the floor), and pushes back on the surface underfoot.
+    ///  - Movement: accelerates the whole body toward a target velocity RELATIVE to the ground, so the
+    ///              player is carried by the creature.
+    ///  - Balance:  torque turns the hips to match the animated hips (facing + sway).
+    /// The character then plays the walk animation scrubbed by actual ground speed, so the feet track the ground.
+    ///
+    /// Put this on the same GameObject as ActiveRagdollCharacter (an empty "Player" object, NOT on the character).
+    /// Optionally add NetworkBones to sync the puppet.
+    /// </summary>
     [RequireComponent(typeof(ActiveRagdollCharacter))]
     public class RagdollPlayerController : NetworkBehaviour
     {
         [Header("References")]
-        [Tooltip("Optional. Select Camera on Character, otherwise one will be created")]
+        [Tooltip("Optional. Uses a Camera found on your character, otherwise one is created.")]
         [SerializeField] private Camera playerCamera;
         [SerializeField] private AudioListener audioListener;
+        [Tooltip("Optional. Needs a Player map with Move, Look, Jump, Sprint, Attack (left hand), Interact (right hand).")]
         [SerializeField] private InputActionAsset inputAsset;
 
         [Header("Testing")]
+        [Tooltip("Treat this player as local when no PurrNet session has spawned it (greybox scenes).")]
         [SerializeField] private bool allowOfflineControl = true;
 
         [Header("Physics")]
+        [Tooltip("Ragdolls are much steadier at a higher physics rate. Sets Time.fixedDeltaTime on start.")]
         [SerializeField] private bool overridePhysicsRate = true;
         [SerializeField] private int physicsRate = 100;
+        [Tooltip("Gravity multiplier while airborne or limp. ~2 feels like a game; 1 feels floaty.")]
         [SerializeField] private float gravityScale = 2f;
+
+        [Header("Facing")]
+        [Tooltip("Body always faces exactly where the camera looks: no strafe turning, no turn lag. Strafing walks the forward animation sideways.")]
+        [SerializeField] private bool lockBodyToCamera = true;
 
         [Header("Movement")]
         [SerializeField] private float walkSpeed = 3.0f;
         [SerializeField] private float sprintMultiplier = 1.5f;
+        [Tooltip("m/s^2 when speeding up on the ground.")]
         [SerializeField] private float groundAcceleration = 40f;
+        [Tooltip("m/s^2 when slowing down / changing direction on the ground. Higher = stops dead.")]
         [SerializeField] private float groundBraking = 65f;
         [SerializeField] private float airAcceleration = 8f;
-        [SerializeField] private float turnRate = 540f;
-        [SerializeField] private float strafeTurnRate = 480f;
+        [Tooltip("How fast the body turns to face its heading (deg/s).")]
+        [SerializeField] private float turnRate = 600f;
+        [Tooltip("How fast the body swings round to face a strafe / backwards direction (deg/s).")]
+        [SerializeField] private float strafeTurnRate = 600f;
 
-        [Header("Balance")]
-        [SerializeField] private float hipsStiffness = 260f;
-        [SerializeField] private float hipsDamping = 28f;
+        [Header("Balance (torque on hips and chest)")]
+        [Tooltip("Holds the body upright (tilt). Keep this high: it always wins over turning.")]
+        [SerializeField] private float hipsTiltStiffness = 450f;
+        [SerializeField] private float hipsTiltDamping = 42f;
+        [Tooltip("Turns the hips about the vertical axis. Lower = gentler, steadier turns.")]
+        [SerializeField] private float hipsYawStiffness = 200f;
+        [SerializeField] private float hipsYawDamping = 26f;
+        [Tooltip("Cap on turning torque (rad/s^2) so a fast mouse flick can't whip the body over.")]
+        [SerializeField] private float maxYawAcceleration = 300f;
+        [SerializeField] private float torsoTiltStiffness = 160f;
+        [SerializeField] private float torsoTiltDamping = 18f;
+        [SerializeField] private float torsoYawStiffness = 90f;
+        [SerializeField] private float torsoYawDamping = 12f;
 
-        [Header("Hover")]
+        [Header("Hover (keeps the body standing)")]
         [SerializeField] private LayerMask groundMask = ~0;
         [SerializeField] private float hoverStiffness = 500f;
         [SerializeField] private float hoverDamping = 42f;
         [SerializeField] private float maxHoverAcceleration = 70f;
         [SerializeField] private float probeExtraDistance = 0.3f;
         [SerializeField] private float maxSlopeAngle = 50f;
+        [Tooltip("Hips target height as a fraction of the animation's own hip height. Slightly below 1 keeps feet planted.")]
         [Range(0.9f, 1.02f)][SerializeField] private float heightScale = 0.99f;
 
         [Header("Jump")]
@@ -50,20 +88,35 @@ namespace DontWakeIt.Player
         [SerializeField] private float jumpBuffer = 0.12f;
 
         [Header("Knockdown")]
+        [Tooltip("Relative collision speed (m/s) above which the body goes limp.")]
         [SerializeField] private float knockdownSpeed = 7f;
         [SerializeField] private float knockdownDuration = 1.5f;
         [SerializeField] private float knockdownCooldown = 0.6f;
+        [Tooltip("How fast motors come back on after the limp period (1/s).")]
         [SerializeField] private float recoveryRate = 1.6f;
+        [Tooltip("Draws a readout of grounded / limp / speed / animation state in the top-left of the Game view.")]
+        [SerializeField] private bool showDebug;
+        [Tooltip("Logs where the body is and what is under it for a few seconds after you take control. Handy if a player sinks or falls.")]
+        [SerializeField] private bool diagnoseSpawn = true;
+        [Tooltip("If the hips fall this far below where the player started, put them back at the start.")]
+        [SerializeField] private float voidDepth = 25f;
+        [Tooltip("Logs what caused each knockdown to the Console.")]
+        [SerializeField] private bool logKnockdowns = true;
 
-        [Header("Look & Camera")]
+        [Header("Look & camera")]
         [SerializeField] private float lookSensitivity = 0.12f;
         [SerializeField] private float maxPitch = 80f;
         [SerializeField] private Vector3 cameraOffset = new Vector3(0f, 0.04f, 0.13f);
+        [Tooltip("Higher = camera sticks harder to the head. Lower = smoother.")]
         [SerializeField] private float cameraFollow = 24f;
-        [Range(0f, 1f)]
-        [SerializeField] private float cameraStability = 0.6f;
+        [Tooltip("0 = camera rides the head (shaky), 1 = rides a steady point above the hips.")]
+        [Range(0f, 1f)][SerializeField] private float cameraStability = 0.6f;
+        [Tooltip("How much the camera takes the head's tumbling orientation while limp (0..1).")]
         [Range(0f, 1f)][SerializeField] private float limpCameraTumble = 0.85f;
 
+        // ---------------------------------------------------------------- Public API
+
+        /// <summary>Fired on the owner for hard impacts. Arg: relative speed. For the Stir system.</summary>
         public event Action<float> OnImpact;
         public event Action OnKnockedDown;
 
@@ -71,8 +124,10 @@ namespace DontWakeIt.Player
         public bool IsLimp => limp > 0.5f;
         public float Limp => limp;
         public Vector3 GroundVelocity => ground.Velocity;
+        /// <summary>Hips velocity relative to the surface underfoot. Use for noise (steps, scuffs).</summary>
         public Vector3 RelativeVelocity => character && character.Hips ? character.Hips.linearVelocity - ground.Velocity : Vector3.zero;
 
+        /// <summary>Shove the whole body and optionally knock it limp (creature twitches, explosions, other players).</summary>
         public void Shove(Vector3 velocityChange, float limpSeconds = 0f)
         {
             if (!IsLocal) return;
@@ -111,8 +166,15 @@ namespace DontWakeIt.Player
         private float spawnTime;
         private float groundHeight;
         private float smoothedAnimHeight = -1f;
+        private float spawnHeight;
+        private bool diagStarted;
+        private float localSince = -1f;
 
-        private bool IsLocal => isSpawned ? isController : allowOfflineControl;
+        // Only the owning player controls a body. Before ownership arrives a freshly spawned body is nobody's,
+        // so neither the host nor the joiner simulates it. Offline test control only applies with no session.
+        private bool IsLocal => isSpawned
+            ? isOwner
+            : allowOfflineControl && (NetworkManager.main == null || NetworkManager.main.isOffline);
         private bool JumpedRecently => Time.time - lastJumpTime < 0.25f;
         private float EffectiveGravity => Mathf.Abs(Physics.gravity.y) * gravityScale;
 
@@ -138,14 +200,18 @@ namespace DontWakeIt.Player
 
         private void Start()
         {
-            if (!character.IsReady) { enabled = false; return; }
+            if (!character.IsReady)
+            {
+                Debug.LogError("RagdollPlayerController: the character failed to set up, so this player can't move. " +
+                               "Look for an earlier error from ActiveRagdollCharacter (usually 'Animated Rig' not assigned " +
+                               "or a body part not found).", this);
+                enabled = false;
+                return;
+            }
 
-            // Sync the puppet's parts over PurrNet if NetworkBones is present.
-            var bones = GetComponent<NetworkBones>();
-            if (bones) bones.extraBones = character.PuppetTransforms;
-
-            lookYaw = facingYaw = character.Hips.transform.eulerAngles.y;
+            lookYaw = facingYaw = character.RestFacingYaw;
             spawnTime = Time.time;
+            spawnHeight = character.Hips.position.y;
             character.PartCollision += OnPartCollision;
 
             if (!isSpawned) RefreshLocalState();
@@ -169,16 +235,45 @@ namespace DontWakeIt.Player
             {
                 EnsureCamera();
                 EnableInput();
+
+                if (localSince < 0f)
+                {
+                    localSince = Time.time;
+                    // The physics bodies can be left where they were created if PurrNet repositions the player
+                    // right after spawning it. Seat them at the spawn point before simulating anything.
+                    character.ResetPoseToRest();
+                }
+
+                if (diagnoseSpawn && !diagStarted)
+                {
+                    diagStarted = true;
+                    StartCoroutine(DiagnoseSpawn());
+                }
             }
             else
             {
                 DisableInput();
             }
 
+            if (!local)
+            {
+                // Other players' copies must never render or listen: turn off any camera that came with the character.
+                var rigCamera = character.RigCamera;
+                if (rigCamera)
+                {
+                    rigCamera.enabled = false;
+                    var rigListener = rigCamera.GetComponent<AudioListener>();
+                    if (rigListener) rigListener.enabled = false;
+                }
+            }
+
             if (playerCamera) playerCamera.enabled = local;
             if (audioListener) audioListener.enabled = local;
-            Cursor.lockState = local ? CursorLockMode.Locked : CursorLockMode.None;
-            Cursor.visible = !local;
+            if (local)
+            {
+                Cursor.lockState = CursorLockMode.Locked;
+                Cursor.visible = false;
+            }
         }
 
         private void EnsureCamera()
@@ -266,10 +361,13 @@ namespace DontWakeIt.Player
             }
             if (moveAction == null) { RefreshLocalState(); return; }
 
-            moveInput = Vector2.ClampMagnitude(moveAction.ReadValue<Vector2>(), 1f);
-            sprintHeld = sprintAction.IsPressed();
-            grabLeft = grabLeftAction.IsPressed();
-            grabRight = grabRightAction.IsPressed();
+            // The pause menu (ConnectionManager) blocks player input while it is open.
+            bool blocked = DontWakeIt.Networking.ConnectionManager.InputBlocked;
+            moveInput = blocked ? Vector2.zero : Vector2.ClampMagnitude(moveAction.ReadValue<Vector2>(), 1f);
+            sprintHeld = !blocked && sprintAction.IsPressed();
+            grabLeft = !blocked && grabLeftAction.IsPressed();
+            grabRight = !blocked && grabRightAction.IsPressed();
+            if (blocked) return;
 
             Vector2 look = lookAction.ReadValue<Vector2>() * lookSensitivity;
             lookYaw += look.x;
@@ -282,6 +380,28 @@ namespace DontWakeIt.Player
         {
             if (!IsLocal || !character.IsReady) return;
             float dt = Time.fixedDeltaTime;
+
+            // For the first moments after taking control the body must still be at its spawn point. If it is
+            // far from it (a stale physics pose), seat it there again.
+            if (localSince >= 0f && Time.time - localSince < 2f &&
+                (character.Hips.position - character.RestHipsWorld).sqrMagnitude > 4f)
+            {
+                Debug.LogWarning("Player body was away from its spawn point; re-seating it.", this);
+                character.ResetPoseToRest();
+                smoothedAnimHeight = -1f;
+                return;
+            }
+
+            // Fell out of the world: put the player back at the start.
+            if (character.Hips.position.y < spawnHeight - voidDepth)
+            {
+                Debug.LogWarning("Player fell out of the world; resetting to the start.", this);
+                character.ResetPoseToRest();
+                limp = 0f;
+                limpTimer = 0f;
+                smoothedAnimHeight = -1f;
+                return;
+            }
 
             ProbeGround(dt);
             UpdateLimp(dt);
@@ -297,7 +417,10 @@ namespace DontWakeIt.Player
             Vector3 lookDir = Quaternion.Euler(pitch, lookYaw, 0f) * Vector3.forward;
 
             // Play the animation for this step and push it into the joint motors.
-            character.Evaluate(dt, signedSpeed, IsGrounded, facingYaw, lookDir, reachL, reachR, limp);
+            // The chest and head turn to the camera immediately, also making up for the hips still catching up.
+            float hipsLag = Mathf.DeltaAngle(YawOf(character.Hips.rotation), YawOf(character.AnimatedHipsRotation));
+            float upperBodyYaw = Mathf.DeltaAngle(facingYaw, lookYaw) + hipsLag;
+            character.Evaluate(dt, signedSpeed, IsGrounded, facingYaw, upperBodyYaw, lookDir, reachL, reachR, limp);
 
             float animHeight = character.AnimatedHipsHeight;
             smoothedAnimHeight = smoothedAnimHeight < 0f ? animHeight : Mathf.Lerp(smoothedAnimHeight, animHeight, 1f - Mathf.Exp(-25f * dt));
@@ -312,6 +435,13 @@ namespace DontWakeIt.Player
             character.SetGrip(BodySide.Right, grabRight);
         }
 
+        private static float YawOf(Quaternion q)
+        {
+            Vector3 f = q * Vector3.forward;
+            f.y = 0f;
+            return f.sqrMagnitude < 1e-6f ? 0f : Mathf.Atan2(f.x, f.z) * Mathf.Rad2Deg;
+        }
+
         /// <summary>
         /// The body faces where you look, but swings round toward the direction you are strafing, and walks the
         /// animation in reverse when you back up.
@@ -323,6 +453,17 @@ namespace DontWakeIt.Player
             float speed = planar.magnitude;
 
             bool hasInput = moveInput.sqrMagnitude > 0.01f;
+
+            if (lockBodyToCamera)
+            {
+                moveOffset = 0f;
+                // The hips turn at a limited rate (steadier); the chest and head track the camera instantly.
+                facingYaw = Mathf.MoveTowardsAngle(facingYaw, lookYaw, turnRate * dt);
+                if (hasInput) moveReverse = moveInput.y < -0.1f;   // only S / back plays the walk in reverse
+                signedSpeed = moveReverse ? -speed : speed;
+                return;
+            }
+
             float targetOffset = 0f;
             if (hasInput && IsGrounded)
             {
@@ -405,20 +546,40 @@ namespace DontWakeIt.Player
             foreach (var rb in character.Bodies) rb.AddForce(Vector3.down * (extra * amount), ForceMode.Acceleration);
         }
 
-        /// <summary>Turn the hips to the animated hips' orientation: facing, plus whatever sway the animation has.</summary>
+        /// <summary>Hold hips and chest upright and turn them to the animated orientation (facing + sway).</summary>
         private void ApplyBalance(float support)
         {
             if (support <= 0.001f) return;
-            var hips = character.Hips;
-            Quaternion target = character.AnimatedHipsRotation;
+            Balance(character.Hips, character.AnimatedHipsRotation,
+                hipsTiltStiffness, hipsTiltDamping, hipsYawStiffness, hipsYawDamping, support);
 
-            Quaternion delta = target * Quaternion.Inverse(hips.rotation);
-            delta.ToAngleAxis(out float angle, out Vector3 axis);
-            if (angle > 180f) angle -= 360f;
+            Quaternion torsoTarget = Quaternion.Euler(0f, character.TorsoTwistDegrees, 0f) * character.AnimatedRotation(Bone.Torso);
+            Balance(character.Body(Bone.Torso), torsoTarget,
+                torsoTiltStiffness, torsoTiltDamping, torsoYawStiffness, torsoYawDamping, support);
+        }
+
+        /// <summary>
+        /// Torque toward a target orientation, split in two: tilt (lean over) is corrected stiffly and uncapped,
+        /// yaw (turning) is gentler and capped. Turning hard can then never overpower staying upright.
+        /// </summary>
+        private void Balance(Rigidbody rb, Quaternion target, float tiltKp, float tiltKd, float yawKp, float yawKd, float scale)
+        {
+            Quaternion delta = target * Quaternion.Inverse(rb.rotation);
+            delta.ToAngleAxis(out float angleDeg, out Vector3 axis);
+            if (angleDeg > 180f) angleDeg -= 360f;
             if (float.IsNaN(axis.x) || float.IsInfinity(axis.x) || axis.sqrMagnitude < 1e-6f) return;
 
-            Vector3 torque = axis.normalized * (angle * Mathf.Deg2Rad * hipsStiffness) - hips.angularVelocity * hipsDamping;
-            hips.AddTorque(torque * support, ForceMode.Acceleration);
+            Vector3 error = axis.normalized * (angleDeg * Mathf.Deg2Rad);   // world-space rotation vector
+            Vector3 w = rb.angularVelocity;
+
+            float yawError = error.y;
+            Vector3 tiltError = new Vector3(error.x, 0f, error.z);
+            Vector3 tiltVel = new Vector3(w.x, 0f, w.z);
+
+            Vector3 tiltTorque = tiltError * tiltKp - tiltVel * tiltKd;
+            float yawTorque = Mathf.Clamp(yawError * yawKp - w.y * yawKd, -maxYawAcceleration, maxYawAcceleration);
+
+            rb.AddTorque((tiltTorque + Vector3.up * yawTorque) * scale, ForceMode.Acceleration);
         }
 
         private void ApplyHover(float support)
@@ -498,8 +659,62 @@ namespace DontWakeIt.Player
             if (relativeSpeed < knockdownSpeed) return;
             if (Time.time - lastKnockdownTime < knockdownCooldown) return;
 
+            if (logKnockdowns)
+                Debug.Log("Knockdown: " + part + " hit '" + c.collider.name + "' at " + relativeSpeed.ToString("F1") + " m/s", this);
             OnImpact?.Invoke(relativeSpeed);
             Knockdown(knockdownDuration * Mathf.Clamp(relativeSpeed / knockdownSpeed, 1f, 2f));
+        }
+
+        /// <summary>Logs position, what is under the hips and the body set-up for a few seconds after taking control.</summary>
+        private IEnumerator DiagnoseSpawn()
+        {
+            for (int i = 0; i < 10; i++)
+            {
+                yield return new WaitForSeconds(0.5f);
+                if (!character || !character.IsReady) yield break;
+
+                Vector3 p = character.Hips.position;
+                string groundInfo = "NONE within 50m";
+                float nearest = float.MaxValue;
+                foreach (var hit in Physics.RaycastAll(p, Vector3.down, 50f, ~0, QueryTriggerInteraction.Ignore))
+                {
+                    if (hit.collider.transform.IsChildOf(transform)) continue;
+                    if (hit.distance < nearest)
+                    {
+                        nearest = hit.distance;
+                        var hipsCollider = character.Hips.GetComponent<Collider>();
+                        bool ignoreLayer = Physics.GetIgnoreLayerCollision(character.Hips.gameObject.layer, hit.collider.gameObject.layer);
+                        bool ignorePair = hipsCollider && Physics.GetIgnoreCollision(hipsCollider, hit.collider);
+                        groundInfo = "'" + hit.collider.name + "' " + hit.distance.ToString("F2") + "m below" +
+                                     " (layer=" + LayerMask.LayerToName(hit.collider.gameObject.layer) +
+                                     " ignoreLayer=" + ignoreLayer + " ignorePair=" + ignorePair + ")";
+                    }
+                }
+
+                Debug.Log("[PlayerDiag " + i + "] hips=" + p.ToString("F2") +
+                          " vy=" + character.Hips.linearVelocity.y.ToString("F1") +
+                          " ground=" + groundInfo + " | " + character.DebugBodies() +
+                          " | grounded=" + IsGrounded + " limp=" + limp.ToString("F2") +
+                          " | fixedDt=" + Time.fixedDeltaTime + " physicsMode=" + Physics.simulationMode, this);
+            }
+        }
+
+        private void OnGUI()
+        {
+            // Only the local player draws it, otherwise every player's text piles up in the same corner.
+            if (!showDebug || !character || !IsLocal) return;
+            if (!character.IsReady)
+            {
+                GUI.Label(new Rect(10f, 10f, 900f, 40f), "CHARACTER NOT READY - see the Console for the error above.");
+                return;
+            }
+
+            GUI.Label(new Rect(10f, 10f, 1000f, 200f),
+                "spawned=" + isSpawned + "  owner=" + isOwner + "  local=" + IsLocal +
+                "  inputBlocked=" + DontWakeIt.Networking.ConnectionManager.InputBlocked + "\n" +
+                "grounded=" + IsGrounded + "  limp=" + limp.ToString("F2") + "  speed=" + RelativeVelocity.magnitude.ToString("F2") +
+                "  hipsH=" + groundHeight.ToString("F2") + "/" + HoverTarget.ToString("F2") + "\n" +
+                character.DebugInfo + "\n" + character.DebugJoints());
         }
 
         // ---------------------------------------------------------------- Camera

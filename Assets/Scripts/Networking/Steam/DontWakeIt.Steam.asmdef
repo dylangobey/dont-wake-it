@@ -1,0 +1,27 @@
+{
+    "name": "DontWakeIt.Steam",
+    "rootNamespace": "DontWakeIt.Networking.Steam",
+    "references": [
+        "DontWakeIt.Networking",
+        "PurrNet.Runtime",
+        "PurrNet.Steam.Runtime",
+        "GUID:68bd7fdb68ef2684e982e8a9825b18a5"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "STEAMWORKS_NET_PACKAGE"
+    ],
+    "versionDefines": [
+        {
+            "name": "com.rlabrecque.steamworks.net",
+            "expression": "2024",
+            "define": "STEAMWORKS_NET_PACKAGE"
+        }
+    ],
+    "noEngineReferences": false
+}
