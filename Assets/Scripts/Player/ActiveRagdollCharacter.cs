@@ -56,6 +56,9 @@ namespace DontWakeIt.Player
         [Header("Walk animation")]
         [Tooltip("Metres the character travels during ONE full loop of the walk clip. Tune until feet stop sliding.")]
         [SerializeField] private float metersPerCycle = 1.6f;
+        [Tooltip("The walk never plays faster than this many loops a second, however fast you move. The legs can't swing " +
+                 "faster than the joints allow, and trailing legs look like leaning. Raise it if sprinting looks too slow-legged.")]
+        [SerializeField] private float maxCyclesPerSecond = 2.2f;
         [Range(0f, 1f)][SerializeField] private float idleNormalizedTime = 0f;
         [Range(0f, 1f)][SerializeField] private float airNormalizedTime = 0.25f;
         [Tooltip("Cycles per second used to ease the walk into its standing / airborne pose.")]
@@ -70,6 +73,22 @@ namespace DontWakeIt.Player
         [SerializeField] private float friction = 0.25f;
         [SerializeField] private int solverIterations = 14;
         [SerializeField] private int solverVelocityIterations = 4;
+
+        [Header("Joint limits")]
+        [Tooltip("Stops limbs bending impossible ways (head spinning round, feet twisting off) when the body goes limp or is hit.")]
+        [SerializeField] private bool useJointLimits = true;
+        [Tooltip("Scales every limit. 1 = the built-in limits, 2 = twice as loose.")]
+        [Range(0.5f, 3f)][SerializeField] private float limitScale = 1f;
+
+        [Header("Hit reactions")]
+        [Tooltip("Hard impacts make the struck part (and its neighbours) go floppy for a moment.")]
+        [SerializeField] private bool hitReactions = true;
+        [Tooltip("Impact speed (m/s, into the surface) below which nothing happens.")]
+        [SerializeField] private float hitThreshold = 4f;
+        [Tooltip("Impact speed above the threshold that makes the part completely limp.")]
+        [SerializeField] private float hitFullRange = 6f;
+        [Tooltip("Seconds for a floppy part to get its strength back.")]
+        [SerializeField] private float hitRecoverTime = 0.6f;
 
         [Header("Grip")]
         [SerializeField] private float gripBreakForce = 6000f;
@@ -93,8 +112,12 @@ namespace DontWakeIt.Player
         private static readonly float[] MassWeight = { 12, 8, 14, 5, 2, 2, 3, 3, 1, 1, 8, 8, 5, 5, 2, 2 };
 
         // Joint motor spring / damper per bone (index 0, the root, has no joint).
-        private static readonly float[] DriveSpring = { 0, 1500, 1500, 450, 700, 700, 500, 500, 250, 250, 3200, 3200, 2600, 2600, 900, 900 };
-        private static readonly float[] DriveDamper = { 0, 100, 100, 35, 45, 45, 35, 35, 20, 20, 170, 170, 150, 150, 60, 60 };
+        private static readonly float[] DriveSpring = { 0, 1500, 1500, 450, 700, 700, 500, 500, 250, 250, 4200, 4200, 3200, 3200, 900, 900 };
+        private static readonly float[] DriveDamper = { 0, 100, 100, 35, 45, 45, 35, 35, 20, 20, 150, 150, 130, 130, 60, 60 };
+
+        // Maximum angle (degrees) each bone may rotate away from its rest pose, in any direction. Generous on the
+        // limbs, because the animation (and arm reaching) must never fight a limit.
+        private static readonly float[] LimitDegrees = { 0, 55, 55, 70, 90, 90, 177, 177, 80, 80, 110, 110, 135, 135, 60, 60 };
 
         // ---------------------------------------------------------------- Public API
 
@@ -117,7 +140,23 @@ namespace DontWakeIt.Player
         public string DebugInfo =>
             "clip=" + (walkClip ? walkClip.name : "NONE") + "  graph=" + (graph.IsValid() ? "ok" : "INVALID") +
             "  phase=" + phase.ToString("F2") + "  animHipsH=" + AnimatedHipsHeight.ToString("F2") +
-            "  twist=" + TorsoTwistDegrees.ToString("F0");
+            "  twist=" + TorsoTwistDegrees.ToString("F0") + "\n" + DebugStun();
+
+        private Bone lastStunBone;
+        private float lastStunSpeed, lastStunNormalY, lastStunTime = float.NegativeInfinity;
+
+        /// <summary>Which parts are floppy from hits right now, and the last hit that caused it.</summary>
+        public string DebugStun()
+        {
+            int worst = 0;
+            for (int i = 1; i < BoneCount; i++) if (hitStun[i] > hitStun[worst]) worst = i;
+            string now = hitStun[worst] > 0.01f ? Names[worst] + " " + hitStun[worst].ToString("F2") : "none";
+            string last = Time.time - lastStunTime < 5f
+                ? lastStunBone + " speed=" + lastStunSpeed.ToString("F1") + " normalY=" + lastStunNormalY.ToString("F2") +
+                  " (" + (Time.time - lastStunTime).ToString("F1") + "s ago)"
+                : "-";
+            return "floppy now: " + now + "   last hit: " + last;
+        }
 
         /// <summary>Per-joint diagnostics: how much the clip rotates each limb and how well the puppet follows.</summary>
         public string DebugJoints()
@@ -165,6 +204,9 @@ namespace DontWakeIt.Player
         private bool hasIdle;
         private float phase;
         private float appliedLimp = -1f;
+        private float requestedLimp;
+        private readonly float[] hitStun = new float[BoneCount];
+        private readonly float[] appliedLevel = new float[BoneCount];
         private bool simulated = true;
         private PhysicsMaterial material;
 
@@ -410,8 +452,22 @@ namespace DontWakeIt.Player
             j.swapBodies = false;
 
             j.xMotion = j.yMotion = j.zMotion = ConfigurableJointMotion.Locked;
-            // Angles are left free: the motors, not limits, decide the pose.
-            j.angularXMotion = j.angularYMotion = j.angularZMotion = ConfigurableJointMotion.Free;
+
+            // The motors decide the pose. Limits are only a safety net around the rest pose, so they are the
+            // same in every direction and don't depend on how your rig's bones are oriented.
+            float limit = Mathf.Min(LimitDegrees[bone] * limitScale, 177f);
+            if (useJointLimits && limit < 176f)
+            {
+                j.angularXMotion = j.angularYMotion = j.angularZMotion = ConfigurableJointMotion.Limited;
+                j.lowAngularXLimit = new SoftJointLimit { limit = -limit, bounciness = 0f, contactDistance = 5f };
+                j.highAngularXLimit = new SoftJointLimit { limit = limit, bounciness = 0f, contactDistance = 5f };
+                j.angularYLimit = new SoftJointLimit { limit = limit, bounciness = 0f, contactDistance = 5f };
+                j.angularZLimit = new SoftJointLimit { limit = limit, bounciness = 0f, contactDistance = 5f };
+            }
+            else
+            {
+                j.angularXMotion = j.angularYMotion = j.angularZMotion = ConfigurableJointMotion.Free;
+            }
 
             j.rotationDriveMode = RotationDriveMode.Slerp;
             j.projectionMode = JointProjectionMode.PositionAndRotation;
@@ -615,6 +671,7 @@ namespace DontWakeIt.Player
                 joints[i].targetRotation = Quaternion.Inverse(animRel) * restRelative[i];
             }
 
+            TickHitStun(dt);
             SetLimp(limp);
         }
 
@@ -629,7 +686,8 @@ namespace DontWakeIt.Player
             }
             else if (absSpeed > 0.08f)
             {
-                phase += signedSpeed / Mathf.Max(0.1f, metersPerCycle) * dt;
+                float cycles = signedSpeed / Mathf.Max(0.1f, metersPerCycle);
+                phase += Mathf.Clamp(cycles, -maxCyclesPerSecond, maxCyclesPerSecond) * dt;
             }
             else
             {
@@ -676,15 +734,42 @@ namespace DontWakeIt.Player
         /// <summary>0 = joints hold the animation, 1 = nearly limp ragdoll.</summary>
         public void SetLimp(float limp)
         {
-            limp = Mathf.Clamp01(limp);
-            if (Mathf.Abs(limp - appliedLimp) < 0.005f) return;
-            appliedLimp = limp;
+            requestedLimp = Mathf.Clamp01(limp);
+            ApplyDrives();
+        }
 
-            float mult = Mathf.Lerp(1f, limpStrength, limp) * jointStrength;
-            float damp = Mathf.Lerp(1f, 0.4f, limp);
+        /// <summary>Makes one part (and, less, its neighbours) floppy for a moment. 0..1.</summary>
+        public void Stun(Bone bone, float amount)
+        {
+            int b = (int)bone;
+            amount = Mathf.Clamp01(amount);
+            hitStun[b] = Mathf.Max(hitStun[b], amount);
+
+            int parent = Parents[b];
+            if (parent > 0) hitStun[parent] = Mathf.Max(hitStun[parent], amount * 0.5f);
+            for (int i = 1; i < BoneCount; i++)
+                if (Parents[i] == b) hitStun[i] = Mathf.Max(hitStun[i], amount * 0.5f);
+        }
+
+        private void TickHitStun(float dt)
+        {
+            float step = dt / Mathf.Max(0.05f, hitRecoverTime);
+            for (int i = 0; i < BoneCount; i++)
+                hitStun[i] = Mathf.Max(0f, hitStun[i] - step);
+        }
+
+        private void ApplyDrives()
+        {
             for (int i = 1; i < BoneCount; i++)
             {
                 if (!joints[i]) continue;
+
+                float level = Mathf.Max(requestedLimp, hitStun[i]);
+                if (Mathf.Abs(level - appliedLevel[i]) < 0.01f && appliedLimp >= 0f) continue;
+                appliedLevel[i] = level;
+
+                float mult = Mathf.Lerp(1f, limpStrength, level) * jointStrength;
+                float damp = Mathf.Lerp(1f, 0.4f, level);
                 joints[i].slerpDrive = new JointDrive
                 {
                     positionSpring = DriveSpring[i] * mult,
@@ -692,6 +777,7 @@ namespace DontWakeIt.Player
                     maximumForce = float.MaxValue
                 };
             }
+            appliedLimp = requestedLimp;
         }
 
         /// <summary>Remote copies follow the network (kinematic); the owner simulates.</summary>
@@ -835,6 +921,19 @@ namespace DontWakeIt.Player
             }
         }
 
+        // Planting a foot on the floor is walking, not being hit (it gets harder when sprinting). Letting it make the
+        // legs floppy made the body sag and lean forward.
+        private static bool IsFloorContact(Collision c)
+        {
+            return c.contactCount > 0 && c.GetContact(0).normal.y > 0.6f;
+        }
+
+        private static bool IsLowerBody(Bone bone)
+        {
+            return bone == Bone.LeftFoot || bone == Bone.RightFoot || bone == Bone.LeftLeg || bone == Bone.RightLeg ||
+                   bone == Bone.LeftThigh || bone == Bone.RightThigh;
+        }
+
         internal void ReportCollision(RagdollPartContact part, Collision c)
         {
             if (c.collider.transform.IsChildOf(transform)) return;
@@ -842,6 +941,20 @@ namespace DontWakeIt.Player
             // made ordinary footsteps look like hard impacts.
             float speed = c.relativeVelocity.magnitude;
             if (c.contactCount > 0) speed = Mathf.Abs(Vector3.Dot(c.relativeVelocity, c.GetContact(0).normal));
+            if (hitReactions)
+            {
+                bool floor = IsFloorContact(c);
+                // Legs on a floor never count. Anything else landing on a floor only counts when it is a real fall.
+                float threshold = floor ? hitThreshold * 2f : hitThreshold;
+                if (!(floor && IsLowerBody(part.bone)) && speed > threshold)
+                {
+                    lastStunBone = part.bone;
+                    lastStunSpeed = speed;
+                    lastStunNormalY = c.contactCount > 0 ? c.GetContact(0).normal.y : 0f;
+                    lastStunTime = Time.time;
+                    Stun(part.bone, Mathf.Clamp01((speed - threshold) / Mathf.Max(0.1f, hitFullRange)));
+                }
+            }
             PartCollision?.Invoke(part.bone, speed, c);
         }
     }

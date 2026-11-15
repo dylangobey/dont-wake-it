@@ -1,8 +1,8 @@
+using System;
+using System.Collections;
 using PurrNet;
 using PurrNet.Modules;
 using PurrNet.Transports;
-using System;
-using System.Collections;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.SceneManagement;
@@ -18,34 +18,61 @@ namespace DontWakeIt.Networking
         InGame
     }
 
+    /// <summary>
+    /// Hosts and joins rooms by room code, on top of PurrNet's NetworkManager.
+    ///
+    /// Lives on the same GameObject as the NetworkManager, in the Boot scene (which is never reloaded).
+    /// The main menu talks to this: Host(kind), Join(kind, code), StartGame(), Leave().
+    ///
+    /// Flow:  Host -> start server -> advertise the room code -> start the host's own client -> lobby.
+    ///        Join -> resolve the code to an address -> start client -> lobby.
+    ///        The host presses Start Game, which loads the game scene for everyone through PurrNet.
+    /// </summary>
     [DefaultExecutionOrder(-400)]
     public class ConnectionManager : MonoBehaviour
     {
         public static ConnectionManager Instance { get; private set; }
 
+        /// <summary>True while the in-game pause menu is open. Player input should be ignored.</summary>
         public static bool InputBlocked { get; private set; }
 
-        [Header("Scenes")]
+        [Header("PurrNet (provide your own)")]
+        [Tooltip("Your NetworkManager. If empty, one on this GameObject or in the scene is used.")]
+        [SerializeField] private NetworkManager networkManager;
+        [Tooltip("Optional. The UDPTransport for Direct / LAN. If empty, one on your NetworkManager is used (or added).")]
+        [SerializeField] private GenericTransport directTransport;
+        [Tooltip("Optional. The SteamTransport for Steam. If empty, one on your NetworkManager is used (or added).")]
+        [SerializeField] private GenericTransport steamTransport;
+
+        [Header("Scenes (must be in Build Settings)")]
         [SerializeField] private string menuScene = "MainMenu";
         [SerializeField] private string gameScene = "SampleScene";
+        [Tooltip("When this starts in the Boot scene, go straight to the main menu.")]
         [SerializeField] private bool loadMenuOnStart = true;
 
         [Header("Room")]
         [SerializeField] private RoomCodeSettings codeSettings = new RoomCodeSettings();
         [Range(1, 16)][SerializeField] private int maxPlayers = 6;
+        [Tooltip("Players can talk to each other in the lobby. The host loads the menu scene through PurrNet so that " +
+                 "each player gets a networked voice object there (needs a PlayerSpawner with the Lobby Voice prefab " +
+                 "in the menu scene: Tools > Dont Wake It > Voice Setup).")]
+        [SerializeField] private bool lobbyVoice = true;
 
         [Header("Direct / LAN")]
+        [Tooltip("UDP port players connect to.")]
         [SerializeField] private ushort gamePort = 5000;
+        [Tooltip("UDP port the host listens on to answer room-code searches.")]
         [SerializeField] private int discoveryPort = 47777;
         [SerializeField] private float searchSeconds = 4f;
 
+        [Header("Timeouts")]
         [SerializeField] private float connectTimeout = 15f;
 
         public ConnectionPhase Phase { get; private set; } = ConnectionPhase.Idle;
         public string RoomCode { get; private set; }
         public BackendKind? ActiveBackend { get; private set; }
         public bool IsHost { get; private set; }
-        public string Status { get; private set; }
+        public string Status { get; private set; } = string.Empty;
         public bool StatusIsError { get; private set; }
 
         public RoomCodeSettings CodeSettings => codeSettings;
@@ -53,33 +80,40 @@ namespace DontWakeIt.Networking
         public int PlayerCount => networkManager ? networkManager.playerCount : 0;
         public string GameScene => gameScene;
 
+        /// <summary>Raised whenever phase, room code or status changes.</summary>
         public event Action Changed;
 
-        private NetworkManager networkManager;
         private IRoomBackend active;
         private Coroutine routine;
         private bool pauseOpen;
+        private bool quitting;
+
+        // ---------------------------------------------------------------- Lifecycle
 
         private void Awake()
         {
-            if(Instance && Instance != this)
+            if (Instance && Instance != this)
             {
-                Destroy(gameObject);
+                Destroy(this);   // only this component: whatever else is on the object is yours
                 return;
             }
             Instance = this;
 
-            networkManager = GetComponent<NetworkManager>();
+            if (!networkManager) networkManager = GetComponent<NetworkManager>();
             if (!networkManager) networkManager = FindFirstObjectByType<NetworkManager>();
             if (!networkManager)
             {
-                Debug.LogError("ConnectionManager needs a NetworkManager on the same GameObject.", this);
+                Debug.LogError("ConnectionManager has no NetworkManager. Drag yours into the 'Network Manager' field " +
+                               "(it must exist in the scene when this starts, e.g. in the Boot scene).", this);
                 enabled = false;
                 return;
             }
 
             DontDestroyOnLoad(transform.root.gameObject);
-            RoomBackends.Register(new UdpRoomBackend(gamePort, discoveryPort, searchSeconds));
+
+            var direct = new UdpRoomBackend(gamePort, discoveryPort, searchSeconds) { TransportOverride = directTransport };
+            RoomBackends.Register(direct);
+            if (RoomBackends.TryGet(BackendKind.Steam, out var steam)) steam.TransportOverride = steamTransport;
         }
 
         private void Start()
@@ -87,7 +121,11 @@ namespace DontWakeIt.Networking
             if (!networkManager) return;
 
             networkManager.onClientConnectionState += OnClientState;
-            if (loadMenuOnStart && !string.IsNullOrEmpty(menuScene) && SceneManager.GetActiveScene().name != menuScene && Application.CanStreamedLevelBeLoaded(menuScene)) SceneManager.LoadScene(menuScene);
+            SceneManager.sceneLoaded += OnSceneLoaded;
+
+            if (loadMenuOnStart && !string.IsNullOrEmpty(menuScene) &&
+                SceneManager.GetActiveScene().name != menuScene && Application.CanStreamedLevelBeLoaded(menuScene))
+                SceneManager.LoadScene(menuScene);
         }
 
         private void OnDestroy()
@@ -103,6 +141,7 @@ namespace DontWakeIt.Networking
 
         private void OnApplicationQuit()
         {
+            quitting = true;
             foreach (var backend in RoomBackends.All) backend.Shutdown();
         }
 
@@ -155,6 +194,24 @@ namespace DontWakeIt.Networking
 
             SetStatus("Loading game...", false);
             scenes.LoadSceneAsync(gameScene, new PurrSceneSettings
+            {
+                mode = LoadSceneMode.Single,
+                physicsMode = LocalPhysicsMode.None,
+                isPublic = true
+            });
+        }
+
+        /// <summary>
+        /// Makes the menu scene a PurrNet scene so lobby players can be spawned in it (for voice chat).
+        /// Clients that join later are told to load it by PurrNet automatically.
+        /// </summary>
+        private void LoadLobbyScene()
+        {
+            var scenes = networkManager.sceneModule;
+            if (scenes == null || string.IsNullOrEmpty(menuScene) || !Application.CanStreamedLevelBeLoaded(menuScene))
+                return;
+
+            scenes.LoadSceneAsync(menuScene, new PurrSceneSettings
             {
                 mode = LoadSceneMode.Single,
                 physicsMode = LocalPhysicsMode.None,
@@ -248,6 +305,7 @@ namespace DontWakeIt.Networking
             }
 
             SetPhase(ConnectionPhase.InLobby, "Room ready. Share the code!");
+            if (lobbyVoice) LoadLobbyScene();
         }
 
         private IEnumerator JoinRoutine(BackendKind kind, string input)
@@ -324,7 +382,7 @@ namespace DontWakeIt.Networking
 
         private void OnClientState(ConnectionState state)
         {
-            if (state != ConnectionState.Disconnected) return;
+            if (quitting || state != ConnectionState.Disconnected) return;
 
             // Lost the connection after we were in a room (host quit, network dropped...).
             if (Phase == ConnectionPhase.InLobby || Phase == ConnectionPhase.InGame)

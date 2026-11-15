@@ -79,10 +79,21 @@ namespace DontWakeIt.Networking.Steam
             return true;
         }
 
+        public GenericTransport TransportOverride { get; set; }
+
         public GenericTransport Bind(NetworkManager manager)
         {
-            transport = manager.GetComponent<SteamTransport>();
-            if (!transport) transport = manager.gameObject.AddComponent<SteamTransport>();
+            transport = TransportOverride as SteamTransport;
+            if (TransportOverride && !transport)
+                Debug.LogWarning("The Steam transport you assigned isn't a SteamTransport; looking for one instead.");
+
+            if (!transport) transport = manager.GetComponentInChildren<SteamTransport>(true);
+            if (!transport)
+            {
+                transport = manager.gameObject.AddComponent<SteamTransport>();
+                Debug.LogWarning("No SteamTransport found, so one was added to the NetworkManager object. " +
+                                 "Add your own, or assign one on the ConnectionManager.");
+            }
             return transport;
         }
 

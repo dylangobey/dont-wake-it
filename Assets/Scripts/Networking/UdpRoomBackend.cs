@@ -1,14 +1,22 @@
-using PurrNet;
-using PurrNet.Transports;
 using System;
 using System.Collections;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using PurrNet;
+using PurrNet.Transports;
 using UnityEngine;
 
 namespace DontWakeIt.Networking
 {
+    /// <summary>
+    /// Plain UDP connections (PurrNet's UDPTransport).
+    ///
+    /// Room codes work on the local network (and between instances on one machine): the host listens on a
+    /// discovery port and answers "who has room ABC12?" broadcasts with its game port. The joiner takes the
+    /// IP the answer came from. Typing an IP address (optionally ip:port) joins directly, which also works
+    /// over the internet if the host has forwarded the game port.
+    /// </summary>
     public sealed class UdpRoomBackend : IRoomBackend
     {
         private const string Magic = "DWI1";
@@ -37,10 +45,21 @@ namespace DontWakeIt.Networking
             return true;
         }
 
+        public GenericTransport TransportOverride { get; set; }
+
         public GenericTransport Bind(NetworkManager manager)
         {
-            transport = manager.GetComponent<UDPTransport>();
-            if (!transport) transport = manager.gameObject.AddComponent<UDPTransport>();
+            transport = TransportOverride as UDPTransport;
+            if (TransportOverride && !transport)
+                Debug.LogWarning("The Direct transport you assigned isn't a UDPTransport; looking for one instead.");
+
+            if (!transport) transport = manager.GetComponentInChildren<UDPTransport>(true);
+            if (!transport)
+            {
+                transport = manager.gameObject.AddComponent<UDPTransport>();
+                Debug.LogWarning("No UDPTransport found, so one was added to the NetworkManager object. " +
+                                 "Add your own, or assign one on the ConnectionManager.");
+            }
             return transport;
         }
 

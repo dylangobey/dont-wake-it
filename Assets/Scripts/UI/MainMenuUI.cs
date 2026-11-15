@@ -1,4 +1,7 @@
+using System;
 using DontWakeIt.Networking;
+using DontWakeIt.Voice;
+using PurrNet.Voice;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem.UI;
@@ -6,6 +9,15 @@ using UnityEngine.UI;
 
 namespace DontWakeIt.UI
 {
+    /// <summary>
+    /// Basic main menu, built entirely in code (no UI assets to wire up).
+    ///
+    ///  Main screen: pick Direct/LAN or Steam, Host a room, or type a room code and Join.
+    ///  Lobby screen: shows the room code and player count; the host presses Start Game.
+    ///
+    /// Talks to the ConnectionManager, which lives in the Boot scene. Start the game from the Boot scene
+    /// (or via the ConnectionManager's menu auto-load) so it exists.
+    /// </summary>
     public class MainMenuUI : MonoBehaviour
     {
         [SerializeField] private string title = "DON'T WAKE IT";
@@ -29,6 +41,15 @@ namespace DontWakeIt.UI
         private Button hostButton, joinButton, startButton;
         private Button directButton, steamButton;
         private Text steamButtonLabel;
+
+        // Microphone selector + level meter
+        private Text micLabel;
+        private Button micButton;
+        private RectTransform micFill;
+        private Device testMic;
+        private volatile float menuLevelRaw;
+        private float menuLevel;
+        private float nextMicCheck;
 
         private BackendKind selected = BackendKind.Direct;
         private ConnectionManager connection;
@@ -55,15 +76,33 @@ namespace DontWakeIt.UI
                 SetStatus("No ConnectionManager found. Press Play from the Boot scene.", true);
             }
             Refresh();
+
+            // In a lobby the voice chat owns the microphone, so only test it before joining a room.
+            if (connection == null || connection.Phase == ConnectionPhase.Idle) StartMicTest();
         }
 
         private void OnDestroy()
         {
             if (connection) connection.Changed -= Refresh;
+            StopMicTest();
         }
 
         private void Update()
         {
+            if (micFill)
+            {
+                menuLevel = Mathf.Lerp(menuLevel, menuLevelRaw, 1f - Mathf.Exp(-15f * Time.unscaledDeltaTime));
+                micFill.anchorMax = new Vector2(Mathf.Clamp01(menuLevel), 1f);
+            }
+
+            // A microphone plugged in after the menu opened.
+            if (Time.unscaledTime >= nextMicCheck)
+            {
+                nextMicCheck = Time.unscaledTime + 1f;
+                bool idle = connection == null || connection.Phase == ConnectionPhase.Idle;
+                if (idle && testMic == null && MicrophoneSettings.HasMicrophone) StartMicTest();
+            }
+
             // Player count changes without any event, so poll gently while in the lobby.
             if (connection && connection.Phase == ConnectionPhase.InLobby && Time.unscaledTime >= nextRefresh)
             {
@@ -83,12 +122,66 @@ namespace DontWakeIt.UI
 
         private void OnHost()
         {
+            StopMicTest();   // free the microphone for the in-game voice chat
             if (connection) connection.Host(selected);
         }
 
         private void OnJoin()
         {
+            StopMicTest();
             if (connection) connection.Join(selected, codeInput.text);
+        }
+
+        // ---------------------------------------------------------------- Microphone
+
+        private void StartMicTest()
+        {
+            StopMicTest();
+            testMic = MicrophoneSettings.Resolve();
+            if (testMic != null)
+            {
+                testMic.onSampleReady += OnMenuSample;
+                testMic.Start();
+            }
+            RefreshMicLabel();
+        }
+
+        private void StopMicTest()
+        {
+            if (testMic != null)
+            {
+                testMic.onSampleReady -= OnMenuSample;
+                testMic.Stop();
+                testMic = null;
+            }
+            menuLevelRaw = 0f;
+        }
+
+        private void OnMenuSample(ArraySegment<float> samples)
+        {
+            menuLevelRaw = MicrophoneSettings.Loudness(samples);
+        }
+
+        private void OnChangeMic()
+        {
+            MicrophoneSettings.Next();
+            StartMicTest();
+        }
+
+        private void RefreshMicLabel()
+        {
+            if (!micLabel) return;
+
+            if (testMic == null)
+            {
+                micLabel.text = "No microphone found: you'll hear others, but they won't hear you.";
+                micButton.interactable = false;
+                return;
+            }
+
+            micLabel.text = "Mic: " + MicrophoneSettings.Describe(testMic) +
+                            (AudioDevices.hasPermission ? string.Empty : "  (needs permission)");
+            micButton.interactable = MicrophoneSettings.Devices.Count > 1;
         }
 
         private void OnSelectBackend(BackendKind kind)
@@ -110,6 +203,8 @@ namespace DontWakeIt.UI
             if (!mainPanel) return;
 
             var phase = connection ? connection.Phase : ConnectionPhase.Idle;
+            if (phase != ConnectionPhase.Idle && testMic != null) StopMicTest();
+            else if (phase == ConnectionPhase.Idle && testMic == null && MicrophoneSettings.HasMicrophone && micLabel) StartMicTest();
             bool inLobby = phase == ConnectionPhase.InLobby;
             bool busy = phase == ConnectionPhase.Hosting || phase == ConnectionPhase.Joining;
 
@@ -198,6 +293,15 @@ namespace DontWakeIt.UI
             joinButton.GetComponent<LayoutElement>().flexibleWidth = 0f;
 
             hintText = MakeText(main, string.Empty, 16, TextAnchor.MiddleCenter, new Color(0.6f, 0.65f, 0.75f), 24f);
+
+            MakeSpacer(main, 4f);
+            var micRow = MakeRow(main, 40f);
+            micLabel = MakeText(micRow, string.Empty, 17, TextAnchor.MiddleLeft, new Color(0.8f, 0.85f, 0.95f), 40f);
+            micButton = MakeButton(micRow, "Change", OnChangeMic, out _, 40f);
+            micButton.GetComponent<LayoutElement>().preferredWidth = 120f;
+            micButton.GetComponent<LayoutElement>().flexibleWidth = 0f;
+            micFill = MakeMeter(main);
+
             statusText = MakeText(main, string.Empty, 20, TextAnchor.MiddleCenter, Color.white, 56f);
             MakeSpacer(main, 6f);
             MakeButton(main, "Quit", () => { if (connection) connection.Quit(); else Application.Quit(); }, out _, 44f);
@@ -352,6 +456,21 @@ namespace DontWakeIt.UI
                 ? char.ToUpperInvariant(c)
                 : '\0';
             return input;
+        }
+
+        /// <summary>A thin level bar; the returned rect is the part that grows with the microphone level.</summary>
+        private static RectTransform MakeMeter(Transform parent)
+        {
+            var background = NewRect("Mic Meter", parent);
+            background.gameObject.AddComponent<Image>().color = new Color(0.12f, 0.13f, 0.18f, 1f);
+            background.gameObject.AddComponent<LayoutElement>().preferredHeight = 10f;
+
+            var fill = NewRect("Fill", background);
+            fill.gameObject.AddComponent<Image>().color = new Color(0.35f, 0.8f, 0.5f, 1f);
+            fill.anchorMin = Vector2.zero;
+            fill.anchorMax = new Vector2(0f, 1f);
+            fill.offsetMin = fill.offsetMax = Vector2.zero;
+            return fill;
         }
 
         private static void Stretch(RectTransform rt, float padding = 0f)

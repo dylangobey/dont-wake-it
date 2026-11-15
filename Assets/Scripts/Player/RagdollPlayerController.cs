@@ -67,6 +67,11 @@ namespace DontWakeIt.Player
         [SerializeField] private float hipsYawDamping = 26f;
         [Tooltip("Cap on turning torque (rad/s^2) so a fast mouse flick can't whip the body over.")]
         [SerializeField] private float maxYawAcceleration = 300f;
+        [Tooltip("Extra tilt stiffness while turning fast (0 = none, 1 = up to double). Stops the body leaning over mid-turn.")]
+        [Range(0f, 3f)][SerializeField] private float turnLeanBoost = 1.2f;
+        [Tooltip("Share of the hips' turning torque also given to the legs, so they swing round with the hips " +
+                 "instead of twisting under them (0 = none).")]
+        [Range(0f, 1.5f)][SerializeField] private float legTurnAssist = 0.7f;
         [SerializeField] private float torsoTiltStiffness = 160f;
         [SerializeField] private float torsoTiltDamping = 18f;
         [SerializeField] private float torsoYawStiffness = 90f;
@@ -550,24 +555,40 @@ namespace DontWakeIt.Player
         private void ApplyBalance(float support)
         {
             if (support <= 0.001f) return;
-            Balance(character.Hips, character.AnimatedHipsRotation,
-                hipsTiltStiffness, hipsTiltDamping, hipsYawStiffness, hipsYawDamping, support);
+
+            // The faster the body is spinning about the vertical, the harder it is to stay upright.
+            float turnSpeed = Mathf.Abs(character.Hips.angularVelocity.y);
+            float boost = 1f + turnLeanBoost * Mathf.Clamp01(turnSpeed / 6f);
+
+            float hipsYaw = Balance(character.Hips, character.AnimatedHipsRotation,
+                hipsTiltStiffness * boost, hipsTiltDamping * boost, hipsYawStiffness, hipsYawDamping, support);
 
             Quaternion torsoTarget = Quaternion.Euler(0f, character.TorsoTwistDegrees, 0f) * character.AnimatedRotation(Bone.Torso);
             Balance(character.Body(Bone.Torso), torsoTarget,
-                torsoTiltStiffness, torsoTiltDamping, torsoYawStiffness, torsoYawDamping, support);
+                torsoTiltStiffness * boost, torsoTiltDamping * boost, torsoYawStiffness, torsoYawDamping, support);
+
+            // Legs turn with the hips.
+            if (legTurnAssist > 0f && Mathf.Abs(hipsYaw) > 0.01f)
+            {
+                Vector3 assist = Vector3.up * (hipsYaw * legTurnAssist);
+                character.Body(Bone.LeftThigh).AddTorque(assist, ForceMode.Acceleration);
+                character.Body(Bone.RightThigh).AddTorque(assist, ForceMode.Acceleration);
+                character.Body(Bone.LeftLeg).AddTorque(assist, ForceMode.Acceleration);
+                character.Body(Bone.RightLeg).AddTorque(assist, ForceMode.Acceleration);
+            }
         }
 
         /// <summary>
         /// Torque toward a target orientation, split in two: tilt (lean over) is corrected stiffly and uncapped,
         /// yaw (turning) is gentler and capped. Turning hard can then never overpower staying upright.
         /// </summary>
-        private void Balance(Rigidbody rb, Quaternion target, float tiltKp, float tiltKd, float yawKp, float yawKd, float scale)
+        /// <summary>Returns the turning acceleration it applied (rad/s^2).</summary>
+        private float Balance(Rigidbody rb, Quaternion target, float tiltKp, float tiltKd, float yawKp, float yawKd, float scale)
         {
             Quaternion delta = target * Quaternion.Inverse(rb.rotation);
             delta.ToAngleAxis(out float angleDeg, out Vector3 axis);
             if (angleDeg > 180f) angleDeg -= 360f;
-            if (float.IsNaN(axis.x) || float.IsInfinity(axis.x) || axis.sqrMagnitude < 1e-6f) return;
+            if (float.IsNaN(axis.x) || float.IsInfinity(axis.x) || axis.sqrMagnitude < 1e-6f) return 0f;
 
             Vector3 error = axis.normalized * (angleDeg * Mathf.Deg2Rad);   // world-space rotation vector
             Vector3 w = rb.angularVelocity;
@@ -580,6 +601,7 @@ namespace DontWakeIt.Player
             float yawTorque = Mathf.Clamp(yawError * yawKp - w.y * yawKd, -maxYawAcceleration, maxYawAcceleration);
 
             rb.AddTorque((tiltTorque + Vector3.up * yawTorque) * scale, ForceMode.Acceleration);
+            return yawTorque * scale;
         }
 
         private void ApplyHover(float support)
