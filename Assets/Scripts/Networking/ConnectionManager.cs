@@ -34,7 +34,13 @@ namespace DontWakeIt.Networking
         public static ConnectionManager Instance { get; private set; }
 
         /// <summary>True while the in-game pause menu is open. Player input should be ignored.</summary>
-        public static bool InputBlocked { get; private set; }
+        public static bool InputBlocked => PauseOpen || UiBlockers > 0;
+
+        /// <summary>True while the pause menu is open.</summary>
+        public static bool PauseOpen { get; private set; }
+
+        /// <summary>Other UI (the tool locker...) that wants the player's controls off while it's open: ++ on open, -- on close.</summary>
+        public static int UiBlockers { get; set; }
 
         [Header("PurrNet (provide your own)")]
         [Tooltip("Your NetworkManager. If empty, one on this GameObject or in the scene is used.")]
@@ -135,7 +141,7 @@ namespace DontWakeIt.Networking
             if (networkManager) networkManager.onClientConnectionState -= OnClientState;
             SceneManager.sceneLoaded -= OnSceneLoaded;
             foreach (var backend in RoomBackends.All) backend.Shutdown();
-            InputBlocked = false;
+            PauseOpen = false;
             Instance = null;
         }
 
@@ -463,7 +469,7 @@ namespace DontWakeIt.Networking
         private void SetPause(bool open)
         {
             pauseOpen = open;
-            InputBlocked = open;
+            PauseOpen = open;
             if (Phase == ConnectionPhase.InGame)
             {
                 Cursor.lockState = open ? CursorLockMode.None : CursorLockMode.Locked;

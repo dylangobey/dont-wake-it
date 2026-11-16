@@ -1,0 +1,26 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 9dbfb765d0ca08e46b3614e259e19add, type: 3}
+  m_Name: Lantern
+  m_EditorClassIdentifier: 
+  id: lantern
+  displayName: Lantern
+  description: 
+  kind: 5
+  tier: 1
+  price: 0
+  prefab: {fileID: 3877147923122821010, guid: 1540f5aa615cc0542b1baa7f6c5b09dc, type: 3}
+  heldLocalPosition: {x: 0, y: 0, z: 0.25}
+  heldLocalEuler: {x: 0, y: 0, z: 0}
+  impactNoise: 0.8
+  noiseMinSpeed: 1.5
+  noiseFullSpeed: 8

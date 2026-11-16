@@ -26,6 +26,9 @@ namespace DontWakeIt.Player
         [Header("References")]
         [Tooltip("Optional. Uses a Camera found on your character, otherwise one is created.")]
         [SerializeField] private Camera playerCamera;
+
+        /// <summary>The camera this player looks through (the one created or assigned above).</summary>
+        public Camera PlayerCamera => playerCamera;
         [SerializeField] private AudioListener audioListener;
         [Tooltip("Optional. Needs a Player map with Move, Look, Jump, Sprint, Attack (left hand), Interact (right hand).")]
         [SerializeField] private InputActionAsset inputAsset;
