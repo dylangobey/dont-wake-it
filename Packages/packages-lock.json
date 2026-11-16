@@ -218,6 +218,21 @@
       },
       "url": "https://packages.unity.com"
     },
+    "dev.purrnet.purrlobby": {
+      "version": "file:dev.purrnet.purrlobby",
+      "depth": 0,
+      "source": "embedded",
+      "dependencies": {}
+    },
+    "dev.purrnet.ui": {
+      "version": "https://github.com/PurrNet/PurrUI.git?path=Assets/PurrUI#v1.7.0",
+      "depth": 0,
+      "source": "git",
+      "dependencies": {
+        "com.unity.ugui": "1.0.0"
+      },
+      "hash": "0b314471f8fae4586426d046dd50f7b9c55fcc00"
+    },
     "com.unity.modules.accessibility": {
       "version": "1.0.0",
       "depth": 0,
